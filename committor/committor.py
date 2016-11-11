@@ -1,124 +1,103 @@
-import math
-import sys
-
-import numpy as np
-import scipy.interpolate
-import matplotlib.pyplot as plt
-
 import fenics
 
-import load_pmf
+from potential_mean_force import PotentialMeanForce
+from periodic_boundary_conditions import generate_periodic_boundary_conditions
+import subdomains
 
 
-EPS = sys.float_info.epsilon
+class CommittorError(Exception):
+    """Error computing the committor function."""
+    pass
 
 
-class Reactant(fenics.SubDomain):
-    center = np.array([160, 120])
-    radius = 20
+def generate_mesh(PMF: PotentialMeanForce, num_cells: int) -> fenics.Mesh:
+    """Generate a mesh for the space of collective variables.
 
-    def inside(self, x, on_boundary) -> bool:
-        z = x - self.center
-        return np.dot(z, z) - self.radius**2 < 0.0
+    """
+    p0 = fenics.Point(*PMF.minima)
+    p1 = fenics.Point(*PMF.maxima)
 
+    n = PMF.num_variables
+    if n == 1:
+        mesh = fenics.IntervalMesh(num_cells, PMF.minima[0], PMF.maxima[0])
+    elif n == 2:
+        mesh = fenics.RectangleMesh(p0, p1, num_cells, num_cells)
+    elif n == 3:
+        mesh = fenics.BoxMesh(p0, p1, num_cells, num_cells, num_cells)
+    else:
+        raise CommittorError('Invalid number of dimensions: {}'.format(n))
 
-class Product(fenics.SubDomain):
-    center = np.array([-70, -70])
-    radius = 20
-
-    def inside(self, x, on_boundary) -> bool:
-        z = x - self.center
-        return np.dot(z, z) - self.radius**2 < 0.0
-
-
-class PeriodicBoundary(fenics.SubDomain):
-    def inside(self, x, on_boundary):
-        return ((math.isclose(x[0], -180.0, rel_tol=EPS)
-                 or math.isclose(x[1], -180.0, rel_tol=EPS))
-                and on_boundary)
-
-    def map(self, x, y):
-        if math.isclose(x[0], 180.0, rel_tol=EPS):
-            y[0] = x[0] - 360.0
-            y[1] = x[1]
-        else:
-            y[0] = x[0]
-            y[1] = x[1] - 360.0
+    return mesh
 
 
-class PotentialMeanForce(fenics.Expression):
-    dFdx = None
-    dFdy = None
+def committor(grad_file: str, pmf_file: str, est_file: str, output: str,
+              num_cells: int, cfg_file: str, verbose: bool) -> None:
+    """Compute committor function.
 
-    def load_pmf(self):
-        x, pmf, dpmf = load_pmf.load_pmf('ala3.grad',
-                                         'ala3.grad.pmf',
-                                         'ala3.grad.est')
-        self.x = x
-        self.pmf = pmf
-        self.dpmf = dpmf
+    Parameters
+    ----------
+    grad_file : str
+        File name of gradient from colvars.
 
-        self.dFdx = scipy.interpolate.NearestNDInterpolator(x, dpmf[:, 0])
-        self.dFdy = scipy.interpolate.NearestNDInterpolator(x, dpmf[:, 1])
+    pmf_file : str
+        File name containing the potential of mean force file from
+        colvars.
 
-    def eval(self, values, x):
-        if self.dFdx is None or self.dFdy is None:
-            self.load_pmf()
+    est_file : str
+        File name of the estimated gradient of the potential of mean
+        force from colvars.
 
-        values[0] = -self.dFdx(x)
-        values[1] = -self.dFdy(x)
+    output_file : str
+        File name where to save results.
 
-    def value_shape(self):
-        return 2,
+    num_cells : int
+        Number of cells per dimension in the mesh. This controls the
+        accuracy of the solution.
 
+    cfg_file : str
+        Configuration file where the reactant and the product are
+        defined.
 
-def main():
-    fenics.set_log_level(fenics.PROGRESS)
+    verbose : bool
+        Whether to print verbose progress information or not.
 
-    n = 256
-    
-    p0 = fenics.Point(-180, -180)
-    p1 = fenics.Point(180, 180)
-    mesh = fenics.RectangleMesh(p0, p1, n, n, 'left/right')
-    # mesh = fenics.UnitSquareMesh(n, n)
-    V = fenics.FunctionSpace(mesh, 'Lagrange', 1,
-                             constrained_domain=PeriodicBoundary())
+    Raises
+    ------
+    CommittorError
+        Error computing the committor function.
+
+    """
+    fenics.set_log_level(fenics.PROGRESS if verbose else fenics.INFO)
+
+    PMF = PotentialMeanForce(grad_file, pmf_file, est_file)
+    PMF.load()
+
+    mesh = generate_mesh(PMF, num_cells)
+
+    PBC = generate_periodic_boundary_conditions(PMF)
+
+    V = fenics.FunctionSpace(mesh, 'Lagrange', 1, constrained_domain=PBC)
 
     u = fenics.TrialFunction(V)
     v = fenics.TestFunction(V)
 
-    reactant = Reactant()
-    bcR = fenics.DirichletBC(V, fenics.Constant(0), reactant)
-    
-    product = Product()
-    bcP = fenics.DirichletBC(V, fenics.Constant(1), product)
+    reactant, product, subdomain_dim = subdomains.make_subdomains(cfg_file)
+    if subdomain_dim != PMF.num_variables:
+        raise CommittorError('Inconsistent subdomain dimension.')
 
-    dF = PotentialMeanForce(degree=1)
+    bc_reactant = fenics.DirichletBC(V, fenics.Constant(0.0), reactant)
+    bc_product = fenics.DirichletBC(V, fenics.Constant(1.0), product)
+    dirichlet_boundaries = [bc_reactant, bc_product]
+
+    dF = PMF.get_gradient(degree=1)
 
     a = (fenics.dot(fenics.grad(u), fenics.grad(v)) * fenics.dx
          - fenics.dot(fenics.grad(u), dF) * v * fenics.dx)
     L = fenics.Constant(0) * v * fenics.dx
-    
+
     u = fenics.Function(V)
-    
-    fenics.solve(a == L, u, [bcR, bcP])
-    
-    # problem = fenics.LinearVariationalProblem(a, L, u, [bcR, bcP])
-    # M = u * fenics.dx
-    # tol = 1e-3
-    # solver = fenics.AdaptiveLinearVariationalSolver(problem, M)
-    # solver.solve(tol)
-    # solver.summary()
-    
-    vtkfile = fenics.File('committor.pvd')
+
+    fenics.solve(a == L, u, dirichlet_boundaries)
+
+    vtkfile = fenics.File(output)
     vtkfile << u
-    
-    fenics.plot(u, cmap='RdBu_r')
-    plt.show()
-
-
-if __name__ == '__main__':
-    main()
-
-
-# main()
