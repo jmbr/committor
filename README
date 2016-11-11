@@ -1,0 +1,64 @@
+
+                               "      m      m                 
+  mmm    mmm   mmmmm  mmmmm  mmm    mm#mm  mm#mm   mmm    m mm 
+ #"  "  #" "#  # # #  # # #    #      #      #    #" "#   #"  "
+ #      #   #  # # #  # # #    #      #      #    #   #   #    
+ "#mm"  "#m#"  # # #  # # #  mm#mm    "mm    "mm  "#m#"   #    
+
+
+Introduction
+------------
+
+This is a tool for computing the committor function of a molecular
+system. It solves the committor equation using the potential of mean
+force as its input. The user can designate arbitrary regions of the
+space of collective variables as reactant or product.
+
+This program solves the boundary value problem known as the committor
+equation in the biophysics literature using the finite element method
+as implemented in the FEniCS library [1]. This tool currently supports
+spaces of up to three collective variables and relies on the output
+from a simulation using the Adaptive Biasing Force method as obtained
+by the colvars program [2].
+
+Installation
+------------
+
+First install FEniCS following the instructions in [1], then install
+the program by writing:
+
+    python setup.py install
+
+Usage
+-----
+
+Invoking the committor command with the --help parameter will show all
+the available command-line options.
+
+In order to solve a committor equation, it is necessary to have the
+.grad, .pmf, and .est files produced by colvars as well as a
+configuration file where the reactant and product subdomains are
+defined (currently only spherical domains are supported). An example
+of a configuration file can be found in the file
+examples/boundaries.cfg.
+
+For example, the command:
+
+  committor --grad-file test/ala3.grad --output committor.pvd \
+            --boundaries test/boundaries.cfg --num-cells 128 --verbose
+
+solves a 2D committor equation where the gradient of the potential of
+mean force is user-specified (via the files ala3.grad, ala3.grad.pmf,
+and ala3.grad.est), the reactant and the product are defined in
+boundaries, and the spatial discretization is done using a mesh with
+128 cells in each dimension. The resulting files can be visualized and
+analyzed in ParaView [3].
+
+References
+----------
+
+[1] https://fenicsproject.org/
+
+[2] https://github.com/colvars/colvars
+
+[3] http://www.paraview.org/

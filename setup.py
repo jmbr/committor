@@ -34,4 +34,3 @@ setup(name='committor',
       entry_points={
           'console_scripts': 'committor = committor.cli:main'
       })
-

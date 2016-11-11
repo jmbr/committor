@@ -1,0 +1,5 @@
+committor/version.py
+committor/__pycache__/*
+scripts/committor
+*.pvd
+*.vtu

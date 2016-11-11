@@ -1,0 +1,8 @@
+include setup.py
+
+include committor/*.py
+include examples/*.{grad,pmf,est,cfg}
+
+include AUTHORS
+include LICENSE
+include README
