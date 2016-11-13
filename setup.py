@@ -30,7 +30,7 @@ setup(name='committor',
       url='https://github.com/jmbr/committor/',
       packages=find_packages(),
       package_data={'': ['LICENSE']},
-      install_requires=['scipy', 'numpy', 'fenics'],
+      install_requires=['scipy', 'numpy'],
       entry_points={
           'console_scripts': 'committor = committor.cli:main'
       })
